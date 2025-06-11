@@ -6,6 +6,7 @@ import "./index.css";
 import { Amplify } from "aws-amplify";
 import outputs from "../amplify_outputs.json";
 import '@aws-amplify/ui-react/styles.css';
+import Button from '@mui/material/Button';
 
 Amplify.configure(outputs);
 
