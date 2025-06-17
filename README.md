@@ -1,6 +1,6 @@
 # 認証付きTodoアプリ（Amplify Gen2 × Vite × React）
 
-##デプロイ
+## デプロイ
 https://main.d1ziokfdlg4hpi.amplifyapp.com/
 
 ## 🧠 このアプリについて
