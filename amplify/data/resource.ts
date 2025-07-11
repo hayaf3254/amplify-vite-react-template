@@ -12,6 +12,9 @@ const schema = a.schema({
       content: a.string(),
       isDone: a.boolean(),
       deadline: a.datetime(), 
+      parentTodoId: a.id(),
+      parent: a.belongsTo('Todo', 'parentTodoId'),// 親
+      subtasks: a.hasMany('Todo', 'parentTodoId'),// 子
       }).authorization(allow => [allow.owner()]),
     
 });
