@@ -1,21 +1,17 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import type { Schema } from "../amplify/data/resource";
 import { useAuthenticator } from '@aws-amplify/ui-react';
-import { generateClient, SelectionSet } from "aws-amplify/data";
+import { generateClient } from "aws-amplify/data";
+import { uploadData, getUrl, remove } from 'aws-amplify/storage';
 import {
-  Button,
-  Stack,
-  Paper,
-  TextField,
-  Typography,
-  Checkbox,
-  IconButton
+  Button, Stack, Paper, TextField, Typography, Checkbox, IconButton, CardMedia
 } from "@mui/material";
 import { styled } from '@mui/material/styles';
 import AddCircleOutlineIcon from '@mui/icons-material/AddCircleOutline';
 import DeleteIcon from '@mui/icons-material/Delete';
+import PhotoCamera from '@mui/icons-material/PhotoCamera';
 
-type Todo = Schema["Todo"]["type"];
+type Todo = Schema["Todo"]["type"] & { subtasks: Todo[] };
 
 const client = generateClient<Schema>();
 
@@ -28,134 +24,303 @@ const Item = styled(Paper)(({ theme }) => ({
   }),
 }));
 
-// 👇 子タスクを読み込むための定義
-const selectionSet = ["id", "content", "isDone", "deadline", "subtasks.*"] as const;
+// 画像表示用のコンポーネント
+const TodoImage = ({ imageKey }: { imageKey: string }) => {
+  const [imageUrl, setImageUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    const fetchUrl = async () => {
+      if (!imageKey) {
+        setImageUrl(null); // imageKey がない場合は表示しない
+        return;
+      }
+      try {
+        console.log(`画像URL取得試行 (key): ${imageKey}`);
+
+        // TodoImage コンポーネント内
+      const key = `public/${imageKey}`; // "public/" を手動で追加
+        const urlResult = await getUrl({
+        path: key, // "public/" を含んだフルパスを指定
+      options: {
+    // accessLevel は削除する
+        validateObjectExistence: true,
+        }
+        });
+
+      
+        setImageUrl(urlResult.url.toString());
+        console.log(`画像URL取得成功: ${urlResult.url.toString()}`);
+      } catch (error) {
+        console.error('画像のURL取得エラー: ', error);
+        setImageUrl(null); // エラー時はURLをクリア
+      }
+    };
+    fetchUrl();
+  }, [imageKey]);
+
+  if (!imageUrl) {
+    return null;
+  }
+
+  return <CardMedia component="img" image={imageUrl} alt="todo image" style={{ maxHeight: 200, marginTop: 10, borderRadius: 4 }} />;
+};
 
 function App() {
   const { user, signOut } = useAuthenticator();
-  // 親タスクのみを保持するState
   const [parentTodos, setParentTodos] = useState<Array<Todo>>([]);
-
-  // 新規親タスク用のState
   const [content, setContent] = useState("");
   const [deadline, setDeadline] = useState("");
-
-// App.tsx の中のこの部分を差し替えてください
+  const [imageFile, setImageFile] = useState<File | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    // 👇 全てのタスクを監視するように変更します
+    // ユーザーが認証されていない場合は、クエリを実行しない
+    if (!user) {
+      console.log("ユーザーが認証されていません。ToDoの取得をスキップします。");
+      setParentTodos([]); // ログアウト時はToDoリストをクリア
+      return;
+    }
+
+    console.log("observeQueryの購読を開始します。");
     const sub = client.models.Todo.observeQuery().subscribe({
       next: ({ items }) => {
-        // --- ここから親子関係を組み立てる処理 ---
-        const todoMap = new Map();
-        const rootTodos = [];
+        console.log("observeQueryが受け取ったアイテム（生データ）:", items);
 
-        // 1. 全てのタスクをMapに登録し、subtasks配列を初期化
+        const todoMap = new Map<string, Todo>();
+        const rootTodos: Todo[] = [];
+
+        // 全てのアイテムをマップに格納し、サブタスク配列を初期化
         items.forEach(item => {
-            todoMap.set(item.id, { ...item, subtasks: [] });
+          todoMap.set(item.id, { ...item, subtasks: [] });
         });
 
-        // 2. 再度全てのタスクをループし、親子関係をリンクさせる
+        // 親子関係を構築
         items.forEach(item => {
-            // もし親IDがあれば、親のsubtasksに自分を追加する
-            if (item.parentTodoId && todoMap.has(item.parentTodoId)) {
-                const parent = todoMap.get(item.parentTodoId);
-                parent.subtasks.push(todoMap.get(item.id));
-            } 
-            // もし親IDがなければ、それは親タスクなのでrootTodosに追加
-            else if (!item.parentTodoId) {
-                rootTodos.push(todoMap.get(item.id));
+          if (item.parentTodoId && todoMap.has(item.parentTodoId)) {
+            const parent = todoMap.get(item.parentTodoId);
+            if (parent) { // 親タスクが存在することを確認
+              parent.subtasks.push(todoMap.get(item.id)!);
             }
+          } else if (!item.parentTodoId) {
+            rootTodos.push(todoMap.get(item.id)!);
+          }
         });
-        
-        // 親タスクを作成日時でソート
+
+        // 親タスクを生成日時でソート
         const sortedTodos = rootTodos.sort((a, b) =>
-            new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+          new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
         );
-        
-        // 組み立て直したタスクリストをStateにセット
+
+        console.log("処理後のルートToDo（親子関係構築済み・ソート済み）:", sortedTodos);
         setParentTodos(sortedTodos);
       },
-      error: (error) => console.error("Query error:", error),
+      error: (error) => console.error("クエリエラー:", error),
     });
+    return () => {
+      console.log("observeQueryの購読を解除します。");
+      sub.unsubscribe();
+    };
+  }, [user]); // user オブジェクトが変更された時に再実行
 
-    return () => sub.unsubscribe();
-  }, []);
-
-  // 親タスクを作成
   const createParentTodo = async () => {
-    if (!content) return;
+    console.log("新しいTODOの作成を開始します...");
+    if (!content.trim()) { // 空白のみの入力も防ぐ
+      console.log("作成中止: 内容が空です。");
+      alert("タスクの内容を入力してください。");
+      return;
+    }
+
+    if (!user?.userId) {
+      console.error("ユーザーIDが取得できません。ログイン状態を確認してください。");
+      alert("タスクを作成するにはログインが必要です。");
+      return;
+    }
+
+    let imageKey: string | null = null;
+    if (imageFile) {
+      console.log("画像ファイルが見つかりました。アップロードを試みます:", imageFile.name);
+      try {
+        const uniqueFileName = `${Date.now()}-${imageFile.name}`;
+        
+        // ★★★修正点★★★
+        // 'private/' やユーザーIDを手動で含めず、ファイル名だけをパスとして指定します。
+        const uploadPath = uniqueFileName;
+        console.log("アップロードパス（プレフィックスなし）:", uploadPath);
+
+        const key = `public/${uploadPath}`; // "public/" を手動で追加
+        await uploadData({
+          path: key, // "public/" を含んだフルパスを指定
+          data: imageFile,
+         // options の accessLevel は削除する
+          }).result;
+
+        // ★★★修正点★★★
+        // DBに保存するのは、プレフィックスを含まない `uploadPath` の値です。
+        imageKey = uploadPath;
+        console.log("画像のアップロード成功。DBに保存するKey:", imageKey);
+      } catch (error) {
+        console.error('画像アップロードエラー。画像なしで処理を続けます:', error);
+        alert("画像のアップロードに失敗しました。タスクは画像なしで作成されます。");
+      }
+    }
+
+    // 期限が空の場合は null に設定
     const deadlineISO = deadline ? new Date(deadline).toISOString() : null;
-    await client.models.Todo.create({
+
+    const newTodoData = {
       content,
       isDone: false,
       deadline: deadlineISO,
-    });
-    setContent("");
-    setDeadline("");
-  }
+      imageKey: imageKey // アップロードした画像のプレフィックスなしキー
+    };
 
-  // 子タスクを作成
-  const createSubtask = async (parentId: string) => {
-    const subtaskContent = window.prompt("サブタスクの内容は？");
-    if (!subtaskContent) return;
-    await client.models.Todo.create({
-      content: subtaskContent,
-      isDone: false,
-      parentTodoId: parentId, // 親のIDを指定
-    });
-  }
+    console.log("このデータでDBに書き込みます:", newTodoData);
 
-  // タスクの完了状態を更新
-  const toggleTodoComplete = async (todo: Todo) => {
-    await client.models.Todo.update({
-      id: todo.id,
-      isDone: !todo.isDone,
-    });
-  };
-
-  // タスクを削除 (親子関係を考慮)
-  const deleteTodo = async (todo: Todo) => {
-    // もし子タスクが存在すれば、それらを先にすべて削除する
-    if (todo.subtasks && todo.subtasks.length > 0) {
-      await Promise.all(
-        todo.subtasks.map(subtask => client.models.Todo.delete({ id: subtask.id }))
-      );
+    try {
+      const result = await client.models.Todo.create(newTodoData);
+      console.log("TODO作成成功！", result);
+      setContent("");
+      setDeadline("");
+      setImageFile(null);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = ""; // ファイル入力フィールドをクリア
+      }
+    } catch (error) {
+      console.error("【重要】TODO作成に失敗しました！:", error);
+      alert("タスクの作成に失敗しました。開発者コンソールを確認してください。");
     }
-    // 親タスク自身を削除
-    await client.models.Todo.delete({ id: todo.id });
+  }
+
+  const createSubtask = async (parentId: string) => {
+    if (!user?.userId) {
+      alert("サブタスクを作成するにはログインが必要です。");
+      return;
+    }
+    const subtaskContent = window.prompt("サブタスクの内容は？");
+    if (!subtaskContent || subtaskContent.trim() === "") {
+      return;
+    }
+    try {
+      await client.models.Todo.create({
+        content: subtaskContent,
+        isDone: false,
+        parentTodoId: parentId,
+      });
+      console.log("サブタスク作成成功！");
+    } catch (error) {
+      console.error("サブタスク作成エラー:", error);
+      alert("サブタスクの作成に失敗しました。");
+    }
+  }
+
+  const toggleTodoComplete = async (todo: Todo) => {
+    if (!user?.userId) {
+      alert("タスクの完了状態を更新するにはログインが必要です。");
+      return;
+    }
+    try {
+      await client.models.Todo.update({
+        id: todo.id,
+        isDone: !todo.isDone,
+      });
+      console.log(`ToDo ${todo.id} の完了状態をトグルしました。`);
+    } catch (error) {
+      console.error(`ToDo ${todo.id} の更新エラー:`, error);
+      alert("タスクの更新に失敗しました。");
+    }
   };
 
+  const deleteTodo = async (todo: Todo) => {
+    if (!user?.userId) {
+      alert("タスクを削除するにはログインが必要です。");
+      return;
+    }
+    // 確認ダイアログ
+    if (!window.confirm(`「${todo.content}」を削除しますか？\nサブタスクも全て削除されます。`)) {
+      return;
+    }
 
-  // タスクを1行レンダリングするコンポーネント
-  const TodoItem = ({ todo, indent = 0 }: { todo: Todo, indent?: number }) => (
-    <Item style={{ marginLeft: `${indent * 30}px` }}>
-      <Stack direction="row" alignItems="center" spacing={1}>
-        <Checkbox
-          checked={todo.isDone}
-          onChange={() => toggleTodoComplete(todo)}
-        />
-        <Stack flexGrow={1}>
-          <Typography variant="body1" style={{ textDecoration: todo.isDone ? 'line-through' : 'none' }}>
-            {todo.content}
-          </Typography>
-          {todo.deadline && (
-            <Typography variant="caption" color="textSecondary">
-              期限: {new Date(todo.deadline).toLocaleString('ja-JP')}
+    try {
+      // サブタスクを再帰的に削除
+      if (todo.subtasks && todo.subtasks.length > 0) {
+        console.log(`ToDo ${todo.id} のサブタスクを削除中...`);
+        await Promise.all(
+          todo.subtasks.map(subtask => deleteTodo(subtask)) // 再帰呼び出し
+        );
+      }
+
+      // 画像が存在すればStorageから削除
+      // deleteTodo 関数内
+      if (todo.imageKey) {
+      // ★★★ここから修正★★★
+        const key = `public/${todo.imageKey}`; // "public/" を手動で追加
+          await remove({
+          path: key, // "public/" を含んだフルパスを指定
+          // options の accessLevel は削除する
+        });
+
+        console.log("画像削除成功。");
+      }
+
+      // ToDoレコードを削除
+      await client.models.Todo.delete({ id: todo.id });
+      console.log(`ToDo ${todo.id} をDBから削除しました。`);
+    } catch (error) {
+      console.error(`ToDo ${todo.id} の削除エラー:`, error);
+      alert("タスクの削除に失敗しました。");
+    }
+  };
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files[0]) {
+      setImageFile(e.target.files[0]);
+    } else {
+      setImageFile(null); // ファイルが選択されなかった場合
+    }
+  };
+
+  const TodoItem = ({ todo, indent = 0 }: { todo: Todo, indent?: number }) => {
+    // 期限表示のオプション
+    const deadlineOptions: Intl.DateTimeFormatOptions = {
+      year: 'numeric', month: 'numeric', day: 'numeric',
+      hour: '2-digit', minute: '2-digit'
+    };
+
+    return (
+      <Item style={{ marginLeft: `${indent * 30}px`, marginTop: '8px' }}>
+        <Stack direction="row" alignItems="center" spacing={1}>
+          <Checkbox checked={!!todo.isDone} onChange={() => toggleTodoComplete(todo)} />
+          <Stack flexGrow={1}>
+            <Typography variant="body1" style={{ textDecoration: todo.isDone ? 'line-through' : 'none', wordBreak: 'break-word' }}>
+              {todo.content}
             </Typography>
+            {todo.deadline && (
+              <Typography variant="caption" color="textSecondary">
+                期限: {new Date(todo.deadline).toLocaleString('ja-JP', deadlineOptions)}
+              </Typography>
+            )}
+          </Stack>
+          {indent === 0 && ( // 親タスクにのみサブタスク追加ボタンを表示
+            <IconButton size="small" title="サブタスクを追加" onClick={() => createSubtask(todo.id)}>
+              <AddCircleOutlineIcon />
+            </IconButton>
           )}
-        </Stack>
-        {indent === 0 && ( // 親タスクにのみ「サブタスク追加」ボタンを表示
-          <IconButton size="small" title="サブタスクを追加" onClick={() => createSubtask(todo.id)}>
-            <AddCircleOutlineIcon />
+          <IconButton size="small" title="削除" onClick={() => deleteTodo(todo)}>
+            <DeleteIcon />
           </IconButton>
+        </Stack>
+        {todo.imageKey && <TodoImage imageKey={todo.imageKey} />}
+        {/* サブタスクを再帰的に表示 */}
+        {todo.subtasks && todo.subtasks.length > 0 && (
+          <Stack pl={2}>
+            {todo.subtasks.map((subtask) => (
+              <TodoItem key={subtask.id} todo={subtask} indent={indent + 1} />
+            ))}
+          </Stack>
         )}
-        <IconButton size="small" title="削除" onClick={() => deleteTodo(todo)}>
-          <DeleteIcon />
-        </IconButton>
-      </Stack>
-    </Item>
-  );
+      </Item>
+    );
+  };
 
   return (
     <main style={{ padding: '20px', maxWidth: '800px', margin: 'auto' }}>
@@ -169,6 +334,7 @@ function App() {
             variant="outlined"
             value={content}
             onChange={(e) => setContent(e.target.value)}
+            fullWidth
           />
           <TextField
             label="期限"
@@ -176,21 +342,30 @@ function App() {
             value={deadline}
             onChange={(e) => setDeadline(e.target.value)}
             InputLabelProps={{ shrink: true }}
+            fullWidth
           />
-          <Button variant="contained" onClick={createParentTodo}>+ 作成する</Button>
+          <Button component="label" variant="outlined" startIcon={<PhotoCamera />}>
+            画像をアップロード
+            <input type="file" accept="image/*" hidden onChange={handleFileChange} ref={fileInputRef} />
+          </Button>
+          {imageFile && <Typography variant="caption">選択中のファイル: {imageFile.name}</Typography>}
+          <Button variant="contained" onClick={createParentTodo} fullWidth>+ 作成する</Button>
         </Stack>
       </Paper>
 
       <Typography variant="h5" mb={2}>タスクリスト</Typography>
-      <Stack spacing={1}>
-        {parentTodos.map((parent) => (
-          <div key={parent.id}>
-            <TodoItem todo={parent} indent={0} />
-            {parent.subtasks?.map((subtask) => (
-              <TodoItem key={subtask.id} todo={subtask} indent={1} />
-            ))}
-          </div>
-        ))}
+      <Stack spacing={0}>
+        {parentTodos.length > 0 ? (
+          parentTodos.map((parent) => (
+            <div key={parent.id}>
+              <TodoItem todo={parent} indent={0} />
+            </div>
+          ))
+        ) : (
+          <Typography variant="body2" color="textSecondary" sx={{ ml: 2 }}>
+            まだタスクがありません。新しいタスクを作成しましょう！
+          </Typography>
+        )}
       </Stack>
 
       <Button title="クリックでログアウト" variant="contained" onClick={signOut} style={{ marginTop: '30px' }}>Sign out</Button>
