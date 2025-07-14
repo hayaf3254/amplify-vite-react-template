@@ -174,8 +174,8 @@ function App() {
           todoMap.set(item.id, {
             ...item,
             subtasks: [], // LazyLoader ではなく空の配列で初期化
-            parent: item.parent ? ({ ...item.parent, subtasks: [] }) as Todo : null // 必要に応じて変換
-          } as Todo); // Todo 型にキャスト
+            parent: null // 親の参照は初期化時はnull。後でツリー構築時に設定する。
+          } as Todo);// Todo 型にキャスト
         });
 
         // 親子関係を構築
