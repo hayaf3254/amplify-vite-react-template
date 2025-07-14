@@ -67,7 +67,7 @@ const TodoImage = ({ imageKey }: { imageKey: string }) => {
 
 function App() {
   const { user, signOut } = useAuthenticator();
-  const [parentTodos, setParentTodos] = useState<Array<Todo>>([]);
+  const [parentTodos, setParentTodos] = useState<Array<Todo>>([] as Todo[]);
   const [content, setContent] = useState("");
   const [deadline, setDeadline] = useState("");
   const [imageFile, setImageFile] = useState<File | null>(null);
