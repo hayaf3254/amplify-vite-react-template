@@ -4,14 +4,20 @@ import { useAuthenticator } from '@aws-amplify/ui-react';
 import { generateClient } from "aws-amplify/data";
 import { uploadData, getUrl, remove } from 'aws-amplify/storage';
 import {
-  Button, Stack, Paper, TextField, Typography, Checkbox, IconButton, CardMedia
+  Button, Stack, Paper, TextField, Typography, Checkbox, IconButton, CardMedia,
+  Dialog, DialogTitle, DialogContent, DialogActions // カスタムモーダルのためのインポート
 } from "@mui/material";
 import { styled } from '@mui/material/styles';
 import AddCircleOutlineIcon from '@mui/icons-material/AddCircleOutline';
 import DeleteIcon from '@mui/icons-material/Delete';
 import PhotoCamera from '@mui/icons-material/PhotoCamera';
 
-type Todo = Schema["Todo"]["type"] & { subtasks: Todo[] };
+type BaseTodoFromSchema = Omit<Schema["Todo"]["type"], "subtasks" | "parent">;
+
+type Todo = BaseTodoFromSchema & {
+  subtasks: Todo[];
+  parent?: Todo | null; // 親タスクも処理後のTodo型として表現する場合
+};
 
 const client = generateClient<Schema>();
 
@@ -38,16 +44,16 @@ const TodoImage = ({ imageKey }: { imageKey: string }) => {
         console.log(`画像URL取得試行 (key): ${imageKey}`);
 
         // TodoImage コンポーネント内
-      const key = `public/${imageKey}`; // "public/" を手動で追加
+        const key = `public/${imageKey}`; // "public/" を手動で追加
         const urlResult = await getUrl({
-        path: key, // "public/" を含んだフルパスを指定
-      options: {
-    // accessLevel は削除する
-        validateObjectExistence: true,
-        }
+          path: key, // "public/" を含んだフルパスを指定
+          options: {
+            // accessLevel は削除する
+            validateObjectExistence: true,
+          }
         });
 
-      
+
         setImageUrl(urlResult.url.toString());
         console.log(`画像URL取得成功: ${urlResult.url.toString()}`);
       } catch (error) {
@@ -67,11 +73,82 @@ const TodoImage = ({ imageKey }: { imageKey: string }) => {
 
 function App() {
   const { user, signOut } = useAuthenticator();
-  const [parentTodos, setParentTodos] = useState<Array<Todo>>([] as Todo[]);
+  // ★★★ 修正点1: useState の初期値をシンプルに ★★★
+  const [parentTodos, setParentTodos] = useState<Todo[]>([]);
   const [content, setContent] = useState("");
   const [deadline, setDeadline] = useState("");
   const [imageFile, setImageFile] = useState<File | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // カスタムモーダルの状態管理
+  const [openAlert, setOpenAlert] = useState(false);
+  const [alertMessage, setAlertMessage] = useState("");
+  const [openConfirm, setOpenConfirm] = useState(false);
+  const [confirmMessage, setConfirmMessage] = useState("");
+  const [confirmAction, setConfirmAction] = useState<(() => void) | null>(null);
+  const [openPrompt, setOpenPrompt] = useState(false);
+  const [promptMessage, setPromptMessage] = useState("");
+  const [promptInput, setPromptInput] = useState("");
+  const [promptAction, setPromptAction] = useState<((value: string | null) => void) | null>(null);
+
+  const showAlert = (message: string) => {
+    setAlertMessage(message);
+    setOpenAlert(true);
+  };
+
+  const handleCloseAlert = () => {
+    setOpenAlert(false);
+    setAlertMessage("");
+  };
+
+  const showConfirm = (message: string, onConfirm: () => void) => {
+    setConfirmMessage(message);
+    setConfirmAction(() => onConfirm);
+    setOpenConfirm(true);
+  };
+
+  const handleConfirm = () => {
+    if (confirmAction) {
+      confirmAction();
+    }
+    setOpenConfirm(false);
+    setConfirmMessage("");
+    setConfirmAction(null);
+  };
+
+  const handleCancelConfirm = () => {
+    setOpenConfirm(false);
+    setConfirmMessage("");
+    setConfirmAction(null);
+  };
+
+  const showPrompt = (message: string, onComplete: (value: string | null) => void) => {
+    setPromptMessage(message);
+    setPromptInput(""); // 入力フィールドをクリア
+    setPromptAction(() => onComplete);
+    setOpenPrompt(true);
+  };
+
+  const handlePromptSubmit = () => {
+    if (promptAction) {
+      promptAction(promptInput);
+    }
+    setOpenPrompt(false);
+    setPromptMessage("");
+    setPromptInput("");
+    setPromptAction(null);
+  };
+
+  const handlePromptCancel = () => {
+    if (promptAction) {
+      promptAction(null); // キャンセル時はnullを返す
+    }
+    setOpenPrompt(false);
+    setPromptMessage("");
+    setPromptInput("");
+    setPromptAction(null);
+  };
+
 
   useEffect(() => {
     // ユーザーが認証されていない場合は、クエリを実行しない
@@ -91,7 +168,14 @@ function App() {
 
         // 全てのアイテムをマップに格納し、サブタスク配列を初期化
         items.forEach(item => {
-          todoMap.set(item.id, { ...item, subtasks: [] });
+          // ★★★ 修正点2: Todo 型に明示的にキャスト ★★★
+          // item は Schema["Todo"]["type"] 型なので、subtasks は LazyLoader です。
+          // ここで新しい Todo 型に変換します。
+          todoMap.set(item.id, {
+            ...item,
+            subtasks: [], // LazyLoader ではなく空の配列で初期化
+            parent: item.parent ? ({ ...item.parent, subtasks: [] }) as Todo : null // 必要に応じて変換
+          } as Todo); // Todo 型にキャスト
         });
 
         // 親子関係を構築
@@ -126,13 +210,13 @@ function App() {
     console.log("新しいTODOの作成を開始します...");
     if (!content.trim()) { // 空白のみの入力も防ぐ
       console.log("作成中止: 内容が空です。");
-      alert("タスクの内容を入力してください。");
+      showAlert("タスクの内容を入力してください。"); // ★★★ alert をカスタムモーダルに置き換え済み ★★★
       return;
     }
 
     if (!user?.userId) {
       console.error("ユーザーIDが取得できません。ログイン状態を確認してください。");
-      alert("タスクを作成するにはログインが必要です。");
+      showAlert("タスクを作成するにはログインが必要です。"); // ★★★ alert をカスタムモーダルに置き換え済み ★★★
       return;
     }
 
@@ -141,9 +225,7 @@ function App() {
       console.log("画像ファイルが見つかりました。アップロードを試みます:", imageFile.name);
       try {
         const uniqueFileName = `${Date.now()}-${imageFile.name}`;
-        
-        // ★★★修正点★★★
-        // 'private/' やユーザーIDを手動で含めず、ファイル名だけをパスとして指定します。
+
         const uploadPath = uniqueFileName;
         console.log("アップロードパス（プレフィックスなし）:", uploadPath);
 
@@ -151,16 +233,14 @@ function App() {
         await uploadData({
           path: key, // "public/" を含んだフルパスを指定
           data: imageFile,
-         // options の accessLevel は削除する
-          }).result;
+          // options の accessLevel は削除する
+        }).result;
 
-        // ★★★修正点★★★
-        // DBに保存するのは、プレフィックスを含まない `uploadPath` の値です。
         imageKey = uploadPath;
         console.log("画像のアップロード成功。DBに保存するKey:", imageKey);
       } catch (error) {
         console.error('画像アップロードエラー。画像なしで処理を続けます:', error);
-        alert("画像のアップロードに失敗しました。タスクは画像なしで作成されます。");
+        showAlert("画像のアップロードに失敗しました。タスクは画像なしで作成されます。"); // ★★★ alert をカスタムモーダルに置き換え済み ★★★
       }
     }
 
@@ -187,35 +267,37 @@ function App() {
       }
     } catch (error) {
       console.error("【重要】TODO作成に失敗しました！:", error);
-      alert("タスクの作成に失敗しました。開発者コンソールを確認してください。");
+      showAlert("タスクの作成に失敗しました。開発者コンソールを確認してください。"); // ★★★ alert をカスタムモーダルに置き換え済み ★★★
     }
   }
 
   const createSubtask = async (parentId: string) => {
     if (!user?.userId) {
-      alert("サブタスクを作成するにはログインが必要です。");
+      showAlert("サブタスクを作成するにはログインが必要です。"); // ★★★ alert をカスタムモーダルに置き換え済み ★★★
       return;
     }
-    const subtaskContent = window.prompt("サブタスクの内容は？");
-    if (!subtaskContent || subtaskContent.trim() === "") {
-      return;
-    }
-    try {
-      await client.models.Todo.create({
-        content: subtaskContent,
-        isDone: false,
-        parentTodoId: parentId,
-      });
-      console.log("サブタスク作成成功！");
-    } catch (error) {
-      console.error("サブタスク作成エラー:", error);
-      alert("サブタスクの作成に失敗しました。");
-    }
+    // ★★★ window.prompt をカスタムモーダルに置き換え済み ★★★
+    showPrompt("サブタスクの内容は？", async (subtaskContent) => {
+      if (!subtaskContent || subtaskContent.trim() === "") {
+        return;
+      }
+      try {
+        await client.models.Todo.create({
+          content: subtaskContent,
+          isDone: false,
+          parentTodoId: parentId,
+        });
+        console.log("サブタスク作成成功！");
+      } catch (error) {
+        console.error("サブタスク作成エラー:", error);
+        showAlert("サブタスクの作成に失敗しました。"); // ★★★ alert をカスタムモーダルに置き換え済み ★★★
+      }
+    });
   }
 
   const toggleTodoComplete = async (todo: Todo) => {
     if (!user?.userId) {
-      alert("タスクの完了状態を更新するにはログインが必要です。");
+      showAlert("タスクの完了状態を更新するにはログインが必要です。"); // ★★★ alert をカスタムモーダルに置き換え済み ★★★
       return;
     }
     try {
@@ -226,49 +308,45 @@ function App() {
       console.log(`ToDo ${todo.id} の完了状態をトグルしました。`);
     } catch (error) {
       console.error(`ToDo ${todo.id} の更新エラー:`, error);
-      alert("タスクの更新に失敗しました。");
+      showAlert("タスクの更新に失敗しました。"); // ★★★ alert をカスタムモーダルに置き換え済み ★★★
     }
   };
 
   const deleteTodo = async (todo: Todo) => {
     if (!user?.userId) {
-      alert("タスクを削除するにはログインが必要です。");
+      showAlert("タスクを削除するにはログインが必要です。"); // ★★★ alert をカスタムモーダルに置き換え済み ★★★
       return;
     }
-    // 確認ダイアログ
-    if (!window.confirm(`「${todo.content}」を削除しますか？\nサブタスクも全て削除されます。`)) {
-      return;
-    }
+    // ★★★ window.confirm をカスタムモーダルに置き換え済み ★★★
+    showConfirm(`「${todo.content}」を削除しますか？\nサブタスクも全て削除されます。`, async () => {
+      try {
+        // サブタスクを再帰的に削除
+        if (todo.subtasks && todo.subtasks.length > 0) {
+          console.log(`ToDo ${todo.id} のサブタスクを削除中...`);
+          await Promise.all(
+            todo.subtasks.map(subtask => deleteTodo(subtask)) // 再帰呼び出し
+          );
+        }
 
-    try {
-      // サブタスクを再帰的に削除
-      if (todo.subtasks && todo.subtasks.length > 0) {
-        console.log(`ToDo ${todo.id} のサブタスクを削除中...`);
-        await Promise.all(
-          todo.subtasks.map(subtask => deleteTodo(subtask)) // 再帰呼び出し
-        );
-      }
-
-      // 画像が存在すればStorageから削除
-      // deleteTodo 関数内
-      if (todo.imageKey) {
-      // ★★★ここから修正★★★
-        const key = `public/${todo.imageKey}`; // "public/" を手動で追加
+        // 画像が存在すればStorageから削除
+        if (todo.imageKey) {
+          const key = `public/${todo.imageKey}`; // "public/" を手動で追加
           await remove({
-          path: key, // "public/" を含んだフルパスを指定
-          // options の accessLevel は削除する
-        });
+            path: key, // "public/" を含んだフルパスを指定
+            // options の accessLevel は削除する
+          });
 
-        console.log("画像削除成功。");
+          console.log("画像削除成功。");
+        }
+
+        // ToDoレコードを削除
+        await client.models.Todo.delete({ id: todo.id });
+        console.log(`ToDo ${todo.id} をDBから削除しました。`);
+      } catch (error) {
+        console.error(`ToDo ${todo.id} の削除エラー:`, error);
+        showAlert("タスクの削除に失敗しました。"); // ★★★ alert をカスタムモーダルに置き換え済み ★★★
       }
-
-      // ToDoレコードを削除
-      await client.models.Todo.delete({ id: todo.id });
-      console.log(`ToDo ${todo.id} をDBから削除しました。`);
-    } catch (error) {
-      console.error(`ToDo ${todo.id} の削除エラー:`, error);
-      alert("タスクの削除に失敗しました。");
-    }
+    });
   };
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -369,6 +447,57 @@ function App() {
       </Stack>
 
       <Button title="クリックでログアウト" variant="contained" onClick={signOut} style={{ marginTop: '30px' }}>Sign out</Button>
+
+      {/* カスタムアラートモーダル */}
+      <Dialog open={openAlert} onClose={handleCloseAlert}>
+        <DialogTitle>お知らせ</DialogTitle>
+        <DialogContent>
+          <Typography>{alertMessage}</Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={handleCloseAlert}>OK</Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* カスタム確認モーダル */}
+      <Dialog open={openConfirm} onClose={handleCancelConfirm}>
+        <DialogTitle>確認</DialogTitle>
+        <DialogContent>
+          <Typography>{confirmMessage}</Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={handleCancelConfirm}>キャンセル</Button>
+          <Button onClick={handleConfirm} autoFocus>OK</Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* カスタムプロンプトモーダル */}
+      <Dialog open={openPrompt} onClose={handlePromptCancel}>
+        <DialogTitle>入力</DialogTitle>
+        <DialogContent>
+          <Typography>{promptMessage}</Typography>
+          <TextField
+            autoFocus
+            margin="dense"
+            id="prompt-input"
+            label="内容"
+            type="text"
+            fullWidth
+            variant="standard"
+            value={promptInput}
+            onChange={(e) => setPromptInput(e.target.value)}
+            onKeyPress={(e) => {
+              if (e.key === 'Enter') {
+                handlePromptSubmit();
+              }
+            }}
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={handlePromptCancel}>キャンセル</Button>
+          <Button onClick={handlePromptSubmit}>OK</Button>
+        </DialogActions>
+      </Dialog>
     </main>
   );
 }
