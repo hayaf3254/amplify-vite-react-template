@@ -1,18 +1,18 @@
 import { useEffect, useState, useRef } from "react";
- import type { Schema } from "./amplify/data/resource"; // This path might need adjustment based on the actual project structure
- import { useAuthenticator } from '@aws-amplify/ui-react';
- import { generateClient } from "aws-amplify/data";
- import { uploadData, getUrl, remove } from 'aws-amplify/storage';
- import {
-   Button, Stack, Paper, TextField, Typography, Checkbox, IconButton, CardMedia,
-   Dialog, DialogTitle, DialogContent, DialogActions
- } from "@mui/material";
- import { styled } from '@mui/material/styles';
- import AddCircleOutlineIcon from '@mui/icons-material/AddCircleOutline';
- import DeleteIcon from '@mui/icons-material/Delete';
- import PhotoCamera from '@mui/icons-material/PhotoCamera';
- import { AIConversation } from '@aws-amplify/ui-react-ai';
- import { useAIConversation } from "./client"; // This path might need adjustment based on the actual project structure
+import type { Schema } from "aws-amplify/data"; // Adjust the import path based on your project structure
+import { useAuthenticator } from '@aws-amplify/ui-react';
+import { generateClient } from "aws-amplify/data";
+import { uploadData, getUrl, remove } from 'aws-amplify/storage';
+import {
+  Button, Stack, Paper, TextField, Typography, Checkbox, IconButton, CardMedia,
+  Dialog, DialogTitle, DialogContent, DialogActions
+} from "@mui/material";
+import { styled } from '@mui/material/styles';
+import AddCircleOutlineIcon from '@mui/icons-material/AddCircleOutline';
+import DeleteIcon from '@mui/icons-material/Delete';
+import PhotoCamera from '@mui/icons-material/PhotoCamera';
+import { AIConversation } from '@aws-amplify/ui-react-ai';
+import { useAIConversation } from "./client"; // This path might need adjustment based on the actual project structureath might need adjustment based on the actual project structure
 
  // Define the Todo type, extending from the schema but including nested subtasks
  type BaseTodoFromSchema = Omit<Schema["Todo"]["type"], "subtasks" | "parent">;
