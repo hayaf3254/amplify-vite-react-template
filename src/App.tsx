@@ -1,7 +1,7 @@
 import { useEffect, useState, useRef } from "react";
-import type { Schema } from "aws-amplify/data"; // Adjust the import path based on your project structure
+import { generateClient } from 'aws-amplify/data'
+import type { Schema } from '../amplify/data/resource'
 import { useAuthenticator } from '@aws-amplify/ui-react';
-import { generateClient } from "aws-amplify/data";
 import { uploadData, getUrl, remove } from 'aws-amplify/storage';
 import {
   Button, Stack, Paper, TextField, Typography, Checkbox, IconButton, CardMedia,
