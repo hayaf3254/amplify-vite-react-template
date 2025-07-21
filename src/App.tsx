@@ -11,6 +11,8 @@ import { styled } from '@mui/material/styles';
 import AddCircleOutlineIcon from '@mui/icons-material/AddCircleOutline';
 import DeleteIcon from '@mui/icons-material/Delete';
 import PhotoCamera from '@mui/icons-material/PhotoCamera';
+import { AIConversation } from '@aws-amplify/ui-react-ai';
+import { useAIConversation } from "./client"; // client.ts をインポート
 
 type BaseTodoFromSchema = Omit<Schema["Todo"]["type"], "subtasks" | "parent">;
 
@@ -80,6 +82,8 @@ function App() {
   const [imageFile, setImageFile] = useState<File | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  const [{data: { messages },isLoading,},handleSendMessage,] = useAIConversation('chat');
+
   // カスタムモーダルの状態管理
   const [openAlert, setOpenAlert] = useState(false);
   const [alertMessage, setAlertMessage] = useState("");
@@ -148,6 +152,8 @@ function App() {
     setPromptInput("");
     setPromptAction(null);
   };
+
+  
 
 
   useEffect(() => {
@@ -402,6 +408,16 @@ function App() {
 
   return (
     <main style={{ padding: '20px', maxWidth: '800px', margin: 'auto' }}>
+      <Typography variant="h4" mt={3} mb={2}>{user?.signInDetails?.loginId}'s todos</Typography>
+       <Typography variant="h4" mt={3} mb={2}>AI アシスタント</Typography>
+      <Paper elevation={2} style={{ padding: '16px', marginBottom: '24px' }}>
+        <AIConversation
+            messages={messages}
+            isLoading={isLoading}
+            handleSendMessage={handleSendMessage}
+        />
+      </Paper>
+      
       <Typography variant="h4" mt={3} mb={2}>{user?.signInDetails?.loginId}'s todos</Typography>
 
       <Paper elevation={2} style={{ padding: '16px', marginBottom: '24px' }}>
